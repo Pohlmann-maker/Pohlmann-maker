@@ -1,0 +1,249 @@
+#include <TinyGPSPlus.h>
+
+#define GPS_BAUD 115200
+
+// GPS TX -> PA10
+// GPS RX -> PA9
+
+Uart SerialGPS(PA_10, PA_9);
+TinyGPSPlus GPS;
+
+unsigned long ultimoStatus = 0;
+unsigned long bytesRecebidos = 0;
+
+bool dataHoraSincronizada = false;
+
+int diaBrasil, mesBrasil, anoBrasil;
+int horaBrasil, minutoBrasil, segundoBrasil;
+
+uint32_t ultimoHorarioGPS = 0;
+
+// ======================================================
+// CONVERTE DATA E HORA UTC PARA BRASILIA (UTC-3)
+// ======================================================
+
+void sincronizarDataHora()
+{
+  if (!GPS.date.isValid() || !GPS.time.isValid())
+    return;
+
+  if (GPS.date.age() > 2000 || GPS.time.age() > 2000)
+    return;
+
+  int dia = GPS.date.day();
+  int mes = GPS.date.month();
+  int ano = GPS.date.year();
+
+  int hora = GPS.time.hour();
+  int minuto = GPS.time.minute();
+  int segundo = GPS.time.second();
+
+  if (ano < 2024 || mes < 1 || mes > 12 ||
+      dia < 1 || dia > 31 || hora > 23 ||
+      minuto > 59 || segundo > 59)
+    return;
+
+  uint32_t horarioGPS =
+      ano * 100000000UL +
+      mes * 1000000UL +
+      dia * 10000UL +
+      hora * 100UL +
+      minuto;
+
+  horarioGPS = horarioGPS * 100UL + segundo;
+
+  if (horarioGPS == ultimoHorarioGPS)
+    return;
+
+  ultimoHorarioGPS = horarioGPS;
+
+  diaBrasil = dia;
+  mesBrasil = mes;
+  anoBrasil = ano;
+
+  horaBrasil = hora - 3;
+  minutoBrasil = minuto;
+  segundoBrasil = segundo;
+
+  // Ajusta o dia quando a conversao passa pela meia-noite
+  if (horaBrasil < 0)
+  {
+    horaBrasil += 24;
+    diaBrasil--;
+
+    if (diaBrasil < 1)
+    {
+      mesBrasil--;
+
+      if (mesBrasil < 1)
+      {
+        mesBrasil = 12;
+        anoBrasil--;
+      }
+
+      int diasMes[] = {
+        31, 28, 31, 30, 31, 30,
+        31, 31, 30, 31, 30, 31
+      };
+
+      bool bissexto =
+          (anoBrasil % 4 == 0 && anoBrasil % 100 != 0) ||
+          (anoBrasil % 400 == 0);
+
+      if (bissexto)
+        diasMes[1] = 29;
+
+      diaBrasil = diasMes[mesBrasil - 1];
+    }
+  }
+
+  dataHoraSincronizada = true;
+}
+
+// ======================================================
+// SETUP
+// ======================================================
+
+void setup()
+{
+  Serial.begin(115200);
+  SerialGPS.begin(GPS_BAUD);
+
+  delay(2000);
+
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("          TESTE GPS NEO-M8M");
+  Serial.println("========================================");
+  Serial.println("GPS TX -> PA10 / D2");
+  Serial.println("GPS RX -> PA9 / D8");
+  Serial.println("Baud GPS: 115200");
+  Serial.println("Aguardando dados do GPS...");
+  Serial.println();
+}
+
+// ======================================================
+// LOOP
+// ======================================================
+
+void loop()
+{
+  // Recebe dados do GPS
+  while (SerialGPS.available() > 0)
+  {
+    char c = SerialGPS.read();
+
+    bytesRecebidos++;
+    GPS.encode(c);
+  }
+
+  // Sincroniza data e hora quando o GPS fornecer dados validos
+  sincronizarDataHora();
+
+  // Exibe o status a cada segundo
+  if (millis() - ultimoStatus >= 1000)
+  {
+    ultimoStatus = millis();
+
+    Serial.println("----------------------------------------");
+
+    Serial.print("Bytes recebidos: ");
+    Serial.println(bytesRecebidos);
+
+    // SATELITES
+    Serial.print("Satelites: ");
+
+    if (GPS.satellites.isValid())
+      Serial.println(GPS.satellites.value());
+    else
+      Serial.println("sem dados");
+
+    // LATITUDE
+    Serial.print("Latitude: ");
+
+    if (GPS.location.isValid())
+      Serial.println(GPS.location.lat(), 6);
+    else
+      Serial.println("sem posicao");
+
+    // LONGITUDE
+    Serial.print("Longitude: ");
+
+    if (GPS.location.isValid())
+      Serial.println(GPS.location.lng(), 6);
+    else
+      Serial.println("sem posicao");
+
+    // ALTITUDE
+    Serial.print("Altitude: ");
+
+    if (GPS.altitude.isValid())
+    {
+      Serial.print(GPS.altitude.meters(), 2);
+      Serial.println(" m");
+    }
+    else
+      Serial.println("sem dados");
+
+    // VELOCIDADE
+    Serial.print("Velocidade: ");
+
+    if (GPS.speed.isValid())
+    {
+      Serial.print(GPS.speed.kmph(), 2);
+      Serial.println(" km/h");
+    }
+    else
+      Serial.println("sem dados");
+
+    // HDOP
+    Serial.print("HDOP: ");
+
+    if (GPS.hdop.isValid())
+      Serial.println(GPS.hdop.hdop(), 2);
+    else
+      Serial.println("sem dados");
+
+    // DATA E HORA: UMA LINHA
+    Serial.print("Data e hora Brasilia: ");
+
+    if (dataHoraSincronizada)
+    {
+      if (diaBrasil < 10) Serial.print("0");
+      Serial.print(diaBrasil);
+      Serial.print("/");
+
+      if (mesBrasil < 10) Serial.print("0");
+      Serial.print(mesBrasil);
+      Serial.print("/");
+      Serial.print(anoBrasil);
+
+      Serial.print(" ");
+
+      if (horaBrasil < 10) Serial.print("0");
+      Serial.print(horaBrasil);
+      Serial.print(":");
+
+      if (minutoBrasil < 10) Serial.print("0");
+      Serial.print(minutoBrasil);
+      Serial.print(":");
+
+      if (segundoBrasil < 10) Serial.print("0");
+      Serial.println(segundoBrasil);
+    }
+    else
+    {
+      Serial.println("aguardando GPS");
+    }
+
+    // POSICAO VALIDA
+    Serial.print("Posicao valida: ");
+
+    if (GPS.location.isValid())
+      Serial.println("SIM");
+    else
+      Serial.println("NAO");
+
+    Serial.println("----------------------------------------");
+  }
+}
